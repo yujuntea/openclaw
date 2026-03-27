@@ -15,7 +15,7 @@ const removeReactionSignal = vi.hoisted(() => vi.fn(async (..._args: unknown[]) 
 const handleSlackAction = vi.hoisted(() => vi.fn(async (..._args: unknown[]) => actionResult()));
 
 let discordMessageActions: typeof import("../../../../extensions/discord/runtime-api.js").discordMessageActions;
-let handleDiscordMessageAction: typeof import("./discord/handle-action.js").handleDiscordMessageAction;
+let handleDiscordMessageAction: typeof import("../../../../extensions/discord/test-api.js").handleDiscordMessageAction;
 let telegramMessageActions: typeof import("../../../../extensions/telegram/runtime-api.js").telegramMessageActions;
 let signalMessageActions: typeof import("../../../../extensions/signal/api.js").signalMessageActions;
 let createSlackActions: typeof import("../../../../extensions/slack/test-api.js").createSlackActions;
@@ -197,7 +197,7 @@ async function expectSlackSendRejected(params: Record<string, unknown>, error: R
 beforeAll(async () => {
   vi.resetModules();
   ({ discordMessageActions } = await import("../../../../extensions/discord/runtime-api.js"));
-  ({ handleDiscordMessageAction } = await import("./discord/handle-action.js"));
+  ({ handleDiscordMessageAction } = await import("../../../../extensions/discord/test-api.js"));
   discordRuntimeModule = await import("../../../../extensions/discord/runtime-api.js");
   ({ telegramMessageActions } = await import("../../../../extensions/telegram/runtime-api.js"));
   telegramTestApiModule = await import("../../../../extensions/telegram/test-api.js");
