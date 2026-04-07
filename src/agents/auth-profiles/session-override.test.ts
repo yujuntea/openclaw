@@ -47,7 +47,7 @@ describe("resolveSessionAuthProfileOverride", () => {
         isNewSession: false,
       });
 
-      expect(resolved).toBeUndefined();
+      expect(resolved).toEqual({});
       await expect(fs.access(path.join(agentDir, "auth-profiles.json"))).rejects.toMatchObject({
         code: "ENOENT",
       });
@@ -79,7 +79,7 @@ describe("resolveSessionAuthProfileOverride", () => {
         isNewSession: false,
       });
 
-      expect(resolved).toBe("zai:work");
+      expect(resolved).toEqual({ authProfileId: "zai:work", authProfileIdSource: "user" });
       expect(sessionEntry.authProfileOverride).toBe("zai:work");
     });
   });

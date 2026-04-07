@@ -2,6 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { CURRENT_SESSION_VERSION, SessionManager } from "@mariozechner/pi-coding-agent";
 import { resolveSessionAgentId } from "../../agents/agent-scope.js";
+import { buildModelAliasIndex } from "../../agents/model-selection.js";
 import { resolveThinkingDefault } from "../../agents/model-selection.js";
 import { rewriteTranscriptEntriesInSessionFile } from "../../agents/pi-embedded-runner/transcript-rewrite.js";
 import { resolveAgentTimeoutMs } from "../../agents/timeout.js";
@@ -10,10 +11,15 @@ import {
   hasAssistantPhaseMetadata,
 } from "../../agents/tools/chat-history-text.js";
 import { dispatchInboundMessage } from "../../auto-reply/dispatch.js";
+import { prepareImageModelFallbacks } from "../../auto-reply/reply/image-model-helpers.js";
 import { createReplyDispatcher } from "../../auto-reply/reply/reply-dispatcher.js";
 import type { MsgContext } from "../../auto-reply/templating.js";
 import { isSilentReplyText, SILENT_REPLY_TOKEN } from "../../auto-reply/tokens.js";
 import type { ReplyPayload } from "../../auto-reply/types.js";
+import {
+  resolveAgentModelFallbackValues,
+  resolveAgentModelPrimaryValue,
+} from "../../config/model-input.js";
 import { resolveSessionFilePath } from "../../config/sessions.js";
 import { formatErrorMessage } from "../../infra/errors.js";
 import { jsonUtf8Bytes } from "../../infra/json-utf8-bytes.js";
@@ -1739,6 +1745,36 @@ export const chatHandlers: GatewayRequestHandlers = {
           savedImages: await persistedImagesPromise,
         });
       };
+      // When message contains images, check if we need to switch to a vision-capable model.
+      let modelOverride: string | undefined;
+      let modelOverrideFallbacks: string[] | undefined;
+      if (parsedImages.length > 0) {
+        const imageModelConfig = cfg.agents?.defaults?.imageModel;
+        const imageModelPrimary = resolveAgentModelPrimaryValue(imageModelConfig);
+        const imageModelFallbacks = resolveAgentModelFallbackValues(imageModelConfig);
+        if (imageModelPrimary || imageModelFallbacks.length > 0) {
+          const modelRef = resolveSessionModelRef(cfg, entry, agentId);
+          const aliasIndex = buildModelAliasIndex({ cfg, defaultProvider: modelRef.provider });
+          // Determine the primary model override
+          if (imageModelPrimary) {
+            modelOverride = imageModelPrimary;
+          } else if (imageModelFallbacks.length > 0) {
+            // Use first fallback as primary when no primary configured
+            modelOverride = imageModelFallbacks[0];
+          }
+          // Prepare fallbacks with allowlist filtering
+          if (imageModelFallbacks.length > 0) {
+            modelOverrideFallbacks = prepareImageModelFallbacks({
+              fallbacks: imageModelFallbacks,
+              cfg,
+              agentId,
+              aliasIndex,
+              defaultProvider: modelRef.provider,
+              defaultModel: modelRef.model,
+            });
+          }
+        }
+      }
       const dispatcher = createReplyDispatcher({
         ...replyPipeline,
         onError: (err) => {
@@ -1771,6 +1807,8 @@ export const chatHandlers: GatewayRequestHandlers = {
           abortSignal: abortController.signal,
           images: parsedImages.length > 0 ? parsedImages : undefined,
           imageOrder: parsedImageOrder.length > 0 ? parsedImageOrder : undefined,
+          modelOverride,
+          modelOverrideFallbacks,
           onAgentRunStart: (runId) => {
             agentRunStarted = true;
             void emitUserTranscriptUpdate();

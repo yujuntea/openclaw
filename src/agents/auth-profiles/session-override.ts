@@ -5,6 +5,12 @@ import { ensureAuthProfileStore, hasAnyAuthProfileStoreSource } from "../auth-pr
 import { isProfileInCooldown } from "../auth-profiles/usage.js";
 import { normalizeProviderId } from "../model-selection.js";
 
+/** Result of resolving session auth profile override. */
+export type ResolvedAuthProfile = {
+  authProfileId?: string;
+  authProfileIdSource?: "auto" | "user";
+};
+
 let sessionStoreRuntimePromise:
   | Promise<typeof import("../../config/sessions/store.runtime.js")>
   | undefined;
@@ -56,7 +62,11 @@ export async function resolveSessionAuthProfileOverride(params: {
   sessionKey?: string;
   storePath?: string;
   isNewSession: boolean;
-}): Promise<string | undefined> {
+  /** When true, skip stored auth profile override if it's not for the current provider. */
+  hasAppliedImageModelOverride?: boolean;
+  /** Default provider to use when checking auth profile provider alignment. */
+  defaultProvider?: string;
+}): Promise<ResolvedAuthProfile> {
   const {
     cfg,
     provider,
@@ -66,9 +76,39 @@ export async function resolveSessionAuthProfileOverride(params: {
     sessionKey,
     storePath,
     isNewSession,
+    hasAppliedImageModelOverride,
+    defaultProvider,
   } = params;
   if (!sessionEntry || !sessionStore || !sessionKey) {
-    return sessionEntry?.authProfileOverride;
+    const override = sessionEntry?.authProfileOverride;
+    const source = sessionEntry?.authProfileOverrideSource;
+    if (override) {
+      return { authProfileId: override, authProfileIdSource: source };
+    }
+    return {};
+  }
+
+  // When an image model override has been applied, skip stored auth profile override
+  // if it's for a different provider than the current (image model) provider.
+  // This prevents cross-provider auth profile mismatches when switching models for images.
+  if (hasAppliedImageModelOverride && sessionEntry.authProfileOverride) {
+    const store = ensureAuthProfileStore(agentDir, { allowKeychainPrompt: false });
+    const profile = store.profiles[sessionEntry.authProfileOverride];
+    const currentProvider = normalizeProviderId(provider);
+    const profileProvider = profile ? normalizeProviderId(profile.provider) : undefined;
+    const defaultProviderNormalized = defaultProvider
+      ? normalizeProviderId(defaultProvider)
+      : undefined;
+    // Skip stored override if profile provider doesn't match current provider
+    // AND current provider is different from default provider (indicating cross-provider switch)
+    if (
+      profileProvider &&
+      profileProvider !== currentProvider &&
+      currentProvider !== defaultProviderNormalized
+    ) {
+      // Return empty to allow the agent run to proceed without auth profile override
+      return {};
+    }
   }
 
   const hasConfiguredAuthProfiles =
@@ -79,7 +119,7 @@ export async function resolveSessionAuthProfileOverride(params: {
     !hasConfiguredAuthProfiles &&
     !hasAnyAuthProfileStoreSource(agentDir)
   ) {
-    return undefined;
+    return {};
   }
 
   const store = ensureAuthProfileStore(agentDir, { allowKeychainPrompt: false });
@@ -102,7 +142,7 @@ export async function resolveSessionAuthProfileOverride(params: {
   }
 
   if (order.length === 0) {
-    return undefined;
+    return {};
   }
 
   const pickFirstAvailable = () =>
@@ -135,7 +175,7 @@ export async function resolveSessionAuthProfileOverride(params: {
         ? "user"
         : undefined);
   if (source === "user" && current && !isNewSession) {
-    return current;
+    return { authProfileId: current, authProfileIdSource: source };
   }
 
   let next = current;
@@ -148,7 +188,10 @@ export async function resolveSessionAuthProfileOverride(params: {
   }
 
   if (!next) {
-    return current;
+    if (current) {
+      return { authProfileId: current, authProfileIdSource: source };
+    }
+    return {};
   }
   const shouldPersist =
     next !== sessionEntry.authProfileOverride ||
@@ -169,5 +212,5 @@ export async function resolveSessionAuthProfileOverride(params: {
     }
   }
 
-  return next;
+  return { authProfileId: next, authProfileIdSource: "auto" };
 }

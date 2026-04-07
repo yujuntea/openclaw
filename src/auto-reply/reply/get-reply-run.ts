@@ -132,6 +132,8 @@ type RunPreparedReplyParams = {
   storePath?: string;
   workspaceDir: string;
   abortedLastRun: boolean;
+  /** True when an image model override was applied, for cross-provider auth handling. */
+  hasAppliedImageModelOverride?: boolean;
 };
 
 export async function runPreparedReply(
@@ -162,6 +164,7 @@ export async function runPreparedReply(
     perMessageQueueOptions,
     typing,
     opts,
+    defaultProvider,
     defaultModel,
     timeoutMs,
     isNewSession,
@@ -172,6 +175,7 @@ export async function runPreparedReply(
     storePath,
     workspaceDir,
     sessionStore,
+    hasAppliedImageModelOverride,
   } = params;
   let {
     sessionEntry,
@@ -441,8 +445,8 @@ export async function runPreparedReply(
     );
     logVerbose(`Interrupting ${sessionLaneKey} (cleared ${cleared}, aborted=${aborted})`);
   }
-  let authProfileId = useFastReplyRuntime
-    ? undefined
+  let authProfileResult = useFastReplyRuntime
+    ? { authProfileId: undefined, authProfileIdSource: undefined }
     : await resolveSessionAuthProfileOverride({
         cfg,
         provider,
@@ -452,6 +456,8 @@ export async function runPreparedReply(
         sessionKey,
         storePath,
         isNewSession,
+        hasAppliedImageModelOverride,
+        defaultProvider,
       });
   const { runReplyAgent } = await loadAgentRunnerRuntime();
   const queueKey = sessionKey ?? sessionIdFinal;
@@ -494,8 +500,8 @@ export async function runPreparedReply(
         piRuntime?.waitForEmbeddedPiRunEnd(activeRunSessionId) ?? Promise.resolve(undefined),
       refreshPreparedState: async () => {
         preparedSessionState = resolvePreparedSessionState();
-        authProfileId = useFastReplyRuntime
-          ? undefined
+        authProfileResult = useFastReplyRuntime
+          ? { authProfileId: undefined, authProfileIdSource: undefined }
           : await resolveSessionAuthProfileOverride({
               cfg,
               provider,
@@ -505,6 +511,8 @@ export async function runPreparedReply(
               sessionKey,
               storePath,
               isNewSession,
+              hasAppliedImageModelOverride,
+              defaultProvider,
             });
         preparedSessionState = resolvePreparedSessionState();
         ({ prefixedCommandBody, queuedBody } = await rebuildPromptBodies());
@@ -517,7 +525,9 @@ export async function runPreparedReply(
     }
     ({ activeSessionId, isActive, isStreaming } = queueState.busyState);
   }
-  const authProfileIdSource = preparedSessionState.sessionEntry?.authProfileOverrideSource;
+  const authProfileIdSource =
+    authProfileResult.authProfileIdSource ??
+    preparedSessionState.sessionEntry?.authProfileOverrideSource;
   const followupRun = {
     prompt: queuedBody,
     messageId: sessionCtx.MessageSidFull ?? sessionCtx.MessageSid,
@@ -558,7 +568,7 @@ export async function runPreparedReply(
       skillsSnapshot,
       provider,
       model,
-      authProfileId,
+      authProfileId: authProfileResult.authProfileId,
       authProfileIdSource,
       thinkLevel: resolvedThinkLevel,
       fastMode: useFastReplyRuntime

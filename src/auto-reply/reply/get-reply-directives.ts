@@ -180,6 +180,8 @@ export async function resolveReplyDirectives(params: {
   provider: string;
   model: string;
   hasResolvedHeartbeatModelOverride: boolean;
+  /** True when an image model override was applied in get-reply.ts for cross-provider auth handling. */
+  hasAppliedImageModelOverride?: boolean;
   typing: TypingController;
   opts?: GetReplyOptions;
   skillFilter?: string[];

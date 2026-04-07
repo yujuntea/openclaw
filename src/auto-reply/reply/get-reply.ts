@@ -332,6 +332,27 @@ export async function getReplyFromConfig(
     }
   }
 
+  // Apply model override for image-containing messages (e.g., Dashboard with images).
+  // This allows automatic switching to a vision-capable model when the message contains images.
+  let hasAppliedImageModelOverride = false;
+  if (opts?.modelOverride) {
+    const imageModelRef = resolveModelRefFromString({
+      raw: opts.modelOverride,
+      defaultProvider,
+      aliasIndex,
+    });
+    if (imageModelRef) {
+      const newProvider = imageModelRef.ref.provider;
+      const newModel = imageModelRef.ref.model;
+      // Only apply override if the model is different from the current selection
+      if (newProvider !== provider || newModel !== model) {
+        provider = newProvider;
+        model = newModel;
+        hasAppliedImageModelOverride = true;
+      }
+    }
+  }
+
   if (
     shouldUseReplyFastDirectiveExecution({
       isFastTestBootstrap: useFastTestRuntime,
@@ -403,6 +424,7 @@ export async function getReplyFromConfig(
       storePath,
       workspaceDir,
       abortedLastRun,
+      hasAppliedImageModelOverride,
     });
   }
 
@@ -429,6 +451,7 @@ export async function getReplyFromConfig(
     provider,
     model,
     hasResolvedHeartbeatModelOverride,
+    hasAppliedImageModelOverride,
     typing,
     opts: resolvedOpts,
     skillFilter: mergedSkillFilter,
@@ -621,5 +644,6 @@ export async function getReplyFromConfig(
     storePath,
     workspaceDir,
     abortedLastRun,
+    hasAppliedImageModelOverride,
   });
 }
