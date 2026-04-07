@@ -1764,6 +1764,20 @@ export const chatHandlers: GatewayRequestHandlers = {
             // Use first fallback as primary when no primary configured
             modelOverride = imageModelFallbacks[0];
           }
+          // Determine the provider context for fallback resolution.
+          // Providerless fallbacks should resolve against the image model's provider,
+          // not the agent's default provider.
+          let imageModelProvider: string | undefined;
+          if (modelOverride) {
+            const overrideRef = resolveModelRefFromString({
+              raw: modelOverride,
+              defaultProvider: modelRef.provider,
+              aliasIndex,
+            });
+            if (overrideRef) {
+              imageModelProvider = overrideRef.ref.provider;
+            }
+          }
           // Prepare fallbacks with allowlist filtering
           if (imageModelFallbacks.length > 0) {
             modelOverrideFallbacks = prepareImageModelFallbacks({
@@ -1773,6 +1787,7 @@ export const chatHandlers: GatewayRequestHandlers = {
               aliasIndex,
               defaultProvider: modelRef.provider,
               defaultModel: modelRef.model,
+              imageModelProvider,
             });
           }
         }
