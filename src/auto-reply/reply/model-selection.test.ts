@@ -208,6 +208,32 @@ describe("createModelSelectionState parent inheritance", () => {
     });
   }
 
+  async function resolveImageOverrideState() {
+    const cfg = {} as OpenClawConfig;
+    const sessionKey = "agent:main:discord:channel:c1";
+    const sessionEntry = makeEntry({
+      providerOverride: "openai",
+      modelOverride: "gpt-4o",
+      authProfileOverride: "anthropic:work",
+      authProfileOverrideSource: "user",
+    });
+    const sessionStore = { [sessionKey]: sessionEntry };
+
+    return createModelSelectionState({
+      cfg,
+      agentCfg: cfg.agents?.defaults,
+      sessionEntry,
+      sessionStore,
+      sessionKey,
+      defaultProvider,
+      defaultModel,
+      provider: "openai",
+      model: "gpt-4o-mini",
+      hasModelDirective: false,
+      hasAppliedImageModelOverride: true,
+    });
+  }
+
   async function resolveStateWithParent(params: {
     cfg: OpenClawConfig;
     parentKey: string;
@@ -332,6 +358,40 @@ describe("createModelSelectionState parent inheritance", () => {
 
     expect(state.provider).toBe("anthropic");
     expect(state.model).toBe("claude-opus-4-6");
+  });
+
+  it("skips stored override when image model override was resolved", async () => {
+    const state = await resolveImageOverrideState();
+
+    expect(state.provider).toBe("openai");
+    expect(state.model).toBe("gpt-4o-mini");
+  });
+
+  it("does not clear mismatched auth profile during cross-provider image override", async () => {
+    const cfg = {} as OpenClawConfig;
+    const sessionKey = "agent:main:discord:channel:c1";
+    const sessionEntry = makeEntry({
+      authProfileOverride: "anthropic:work",
+      authProfileOverrideSource: "user",
+    });
+    const sessionStore = { [sessionKey]: sessionEntry };
+
+    await createModelSelectionState({
+      cfg,
+      agentCfg: cfg.agents?.defaults,
+      sessionEntry,
+      sessionStore,
+      sessionKey,
+      defaultProvider: "anthropic",
+      defaultModel: "claude-opus-4-6",
+      provider: "openai",
+      model: "gpt-4o",
+      hasModelDirective: false,
+      hasAppliedImageModelOverride: true,
+    });
+
+    expect(sessionEntry.authProfileOverride).toBe("anthropic:work");
+    expect(sessionEntry.authProfileOverrideSource).toBe("user");
   });
 });
 

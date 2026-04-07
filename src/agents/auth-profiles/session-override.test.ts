@@ -15,9 +15,11 @@ async function writeAuthStore(agentDir: string) {
   const payload = {
     version: 1,
     profiles: {
+      "openai:work": { type: "api_key", provider: "openai", key: "sk-openai" },
       "zai:work": { type: "api_key", provider: "zai", key: "sk-test" },
     },
     order: {
+      openai: ["openai:work"],
       zai: ["zai:work"],
     },
   };
@@ -81,6 +83,39 @@ describe("resolveSessionAuthProfileOverride", () => {
 
       expect(resolved).toEqual({ authProfileId: "zai:work", authProfileIdSource: "user" });
       expect(sessionEntry.authProfileOverride).toBe("zai:work");
+    });
+  });
+
+  it("resolves cross-provider image auth temporarily without persisting session changes", async () => {
+    await withStateDirEnv("openclaw-auth-", async ({ stateDir }) => {
+      const agentDir = path.join(stateDir, "agent");
+      await fs.mkdir(agentDir, { recursive: true });
+      await writeAuthStore(agentDir);
+
+      const sessionEntry: SessionEntry = {
+        sessionId: "s1",
+        updatedAt: Date.now(),
+        authProfileOverride: "zai:work",
+        authProfileOverrideSource: "user",
+      };
+      const sessionStore = { "agent:main:main": sessionEntry };
+
+      const resolved = await resolveSessionAuthProfileOverride({
+        cfg: {} as OpenClawConfig,
+        provider: "openai",
+        agentDir,
+        sessionEntry,
+        sessionStore,
+        sessionKey: "agent:main:main",
+        storePath: undefined,
+        isNewSession: false,
+        hasAppliedImageModelOverride: true,
+        defaultProvider: "zai",
+      });
+
+      expect(resolved).toEqual({ authProfileId: "openai:work", authProfileIdSource: "auto" });
+      expect(sessionEntry.authProfileOverride).toBe("zai:work");
+      expect(sessionEntry.authProfileOverrideSource).toBe("user");
     });
   });
 });

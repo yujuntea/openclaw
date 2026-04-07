@@ -79,6 +79,14 @@ export async function resolveSessionAuthProfileOverride(params: {
     hasAppliedImageModelOverride,
     defaultProvider,
   } = params;
+  const defaultProviderNormalized = defaultProvider
+    ? normalizeProviderId(defaultProvider)
+    : undefined;
+  const providerNormalized = normalizeProviderId(provider);
+  const isCrossProviderImageOverride =
+    hasAppliedImageModelOverride === true &&
+    !!defaultProviderNormalized &&
+    providerNormalized !== defaultProviderNormalized;
   if (!sessionEntry || !sessionStore || !sessionKey) {
     const override = sessionEntry?.authProfileOverride;
     const source = sessionEntry?.authProfileOverrideSource;
@@ -86,29 +94,6 @@ export async function resolveSessionAuthProfileOverride(params: {
       return { authProfileId: override, authProfileIdSource: source };
     }
     return {};
-  }
-
-  // When an image model override has been applied, skip stored auth profile override
-  // if it's for a different provider than the current (image model) provider.
-  // This prevents cross-provider auth profile mismatches when switching models for images.
-  if (hasAppliedImageModelOverride && sessionEntry.authProfileOverride) {
-    const store = ensureAuthProfileStore(agentDir, { allowKeychainPrompt: false });
-    const profile = store.profiles[sessionEntry.authProfileOverride];
-    const currentProvider = normalizeProviderId(provider);
-    const profileProvider = profile ? normalizeProviderId(profile.provider) : undefined;
-    const defaultProviderNormalized = defaultProvider
-      ? normalizeProviderId(defaultProvider)
-      : undefined;
-    // Skip stored override if profile provider doesn't match current provider
-    // AND current provider is different from default provider (indicating cross-provider switch)
-    if (
-      profileProvider &&
-      profileProvider !== currentProvider &&
-      currentProvider !== defaultProviderNormalized
-    ) {
-      // Return empty to allow the agent run to proceed without auth profile override
-      return {};
-    }
   }
 
   const hasConfiguredAuthProfiles =
@@ -132,8 +117,12 @@ export async function resolveSessionAuthProfileOverride(params: {
   }
 
   if (current && !isProfileForProvider({ provider, profileId: current, store })) {
-    await clearSessionAuthProfileOverride({ sessionEntry, sessionStore, sessionKey, storePath });
-    current = undefined;
+    if (isCrossProviderImageOverride) {
+      current = undefined;
+    } else {
+      await clearSessionAuthProfileOverride({ sessionEntry, sessionStore, sessionKey, storePath });
+      current = undefined;
+    }
   }
 
   if (current && order.length > 0 && !order.includes(current)) {
@@ -194,9 +183,10 @@ export async function resolveSessionAuthProfileOverride(params: {
     return {};
   }
   const shouldPersist =
-    next !== sessionEntry.authProfileOverride ||
-    sessionEntry.authProfileOverrideSource !== "auto" ||
-    sessionEntry.authProfileOverrideCompactionCount !== compactionCount;
+    !isCrossProviderImageOverride &&
+    (next !== sessionEntry.authProfileOverride ||
+      sessionEntry.authProfileOverrideSource !== "auto" ||
+      sessionEntry.authProfileOverrideCompactionCount !== compactionCount);
   if (shouldPersist) {
     sessionEntry.authProfileOverride = next;
     sessionEntry.authProfileOverrideSource = "auto";

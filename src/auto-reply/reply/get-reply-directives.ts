@@ -208,6 +208,7 @@ export async function resolveReplyDirectives(params: {
     provider: initialProvider,
     model: initialModel,
     hasResolvedHeartbeatModelOverride,
+    hasAppliedImageModelOverride,
     typing,
     opts,
     skillFilter,
@@ -491,6 +492,7 @@ export async function resolveReplyDirectives(params: {
           model,
           hasModelDirective: directives.hasModelDirective,
           hasResolvedHeartbeatModelOverride,
+          hasAppliedImageModelOverride,
         });
   provider = modelState.provider;
   model = modelState.model;

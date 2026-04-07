@@ -1,3 +1,4 @@
+import type { ModelCatalogEntry } from "../../agents/model-catalog.js";
 import {
   buildAllowedModelSet,
   buildModelAliasIndex,
@@ -297,6 +298,15 @@ export type ResolveChannelModelSupportsVisionParams = {
   hasAppliedImageModelOverride: boolean;
 };
 
+export type ResolveModelSupportsVisionParams = {
+  provider: string;
+  model: string;
+  imageModelConfig?: AgentModelConfig;
+  defaultProvider: string;
+  cfg: OpenClawConfig;
+  loadModelCatalog?: (params: { config: OpenClawConfig }) => Promise<ModelCatalogEntry[]>;
+};
+
 /**
  * Result of checking if channel model supports vision.
  */
@@ -405,4 +415,39 @@ export async function resolveChannelModelSupportsVision(
   }
 
   return { channelModelIsVisionModel: false, channelResolved: channelResolved.ref };
+}
+
+export async function resolveModelSupportsVision(
+  params: ResolveModelSupportsVisionParams,
+): Promise<boolean> {
+  const {
+    provider,
+    model,
+    imageModelConfig,
+    defaultProvider,
+    cfg,
+    loadModelCatalog: loadCatalog,
+  } = params;
+  const aliasIndex = buildModelAliasIndex({ cfg, defaultProvider });
+
+  if (imageModelConfig) {
+    const { keys: imageModelKeys } = collectImageModelKeys({
+      imageModelConfig,
+      aliasIndex,
+      defaultProvider,
+    });
+    if (isImageModel(provider, model, imageModelKeys)) {
+      return true;
+    }
+  }
+
+  try {
+    const { findModelInCatalog, loadModelCatalog, modelSupportsVision } =
+      await import("../../agents/model-catalog.js");
+    const catalog = await (loadCatalog ?? loadModelCatalog)({ config: cfg });
+    const catalogEntry = findModelInCatalog(catalog, provider, model);
+    return modelSupportsVision(catalogEntry);
+  } catch {
+    return false;
+  }
 }

@@ -2,7 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { CURRENT_SESSION_VERSION, SessionManager } from "@mariozechner/pi-coding-agent";
 import { resolveSessionAgentId } from "../../agents/agent-scope.js";
-import { buildModelAliasIndex } from "../../agents/model-selection.js";
+import { buildModelAliasIndex, resolveModelRefFromString } from "../../agents/model-selection.js";
 import { resolveThinkingDefault } from "../../agents/model-selection.js";
 import { rewriteTranscriptEntriesInSessionFile } from "../../agents/pi-embedded-runner/transcript-rewrite.js";
 import { resolveAgentTimeoutMs } from "../../agents/timeout.js";
@@ -11,7 +11,10 @@ import {
   hasAssistantPhaseMetadata,
 } from "../../agents/tools/chat-history-text.js";
 import { dispatchInboundMessage } from "../../auto-reply/dispatch.js";
-import { prepareImageModelFallbacks } from "../../auto-reply/reply/image-model-helpers.js";
+import {
+  prepareImageModelFallbacks,
+  resolveModelSupportsVision,
+} from "../../auto-reply/reply/image-model-helpers.js";
 import { createReplyDispatcher } from "../../auto-reply/reply/reply-dispatcher.js";
 import type { MsgContext } from "../../auto-reply/templating.js";
 import { isSilentReplyText, SILENT_REPLY_TOKEN } from "../../auto-reply/tokens.js";
@@ -1554,14 +1557,65 @@ export const chatHandlers: GatewayRequestHandlers = {
       return;
     }
 
+    let modelOverride: string | undefined;
+    let modelOverrideFallbacks: string[] | undefined;
     if (normalizedAttachments.length > 0) {
       const sessionAgentId = resolveSessionAgentId({ sessionKey, config: cfg });
       const modelRef = resolveSessionModelRef(cfg, entry, sessionAgentId);
-      const supportsImages = await resolveGatewayModelSupportsImages({
-        loadGatewayModelCatalog: context.loadGatewayModelCatalog,
-        provider: modelRef.provider,
-        model: modelRef.model,
-      });
+      const aliasIndex = buildModelAliasIndex({ cfg, defaultProvider: modelRef.provider });
+      const imageModelConfig = cfg.agents?.defaults?.imageModel;
+      const imageModelPrimary = resolveAgentModelPrimaryValue(imageModelConfig);
+      const imageModelFallbacks = resolveAgentModelFallbackValues(imageModelConfig);
+      let parseProvider = modelRef.provider;
+      let parseModel = modelRef.model;
+      let imageModelProvider: string | undefined;
+
+      if (imageModelPrimary) {
+        modelOverride = imageModelPrimary;
+      } else if (imageModelFallbacks.length > 0) {
+        modelOverride = imageModelFallbacks[0];
+      }
+
+      if (modelOverride) {
+        const overrideRef = resolveModelRefFromString({
+          raw: modelOverride,
+          defaultProvider: modelRef.provider,
+          aliasIndex,
+        });
+        if (overrideRef) {
+          parseProvider = overrideRef.ref.provider;
+          parseModel = overrideRef.ref.model;
+          imageModelProvider = overrideRef.ref.provider;
+        }
+      }
+
+      if (imageModelFallbacks.length > 0) {
+        modelOverrideFallbacks = prepareImageModelFallbacks({
+          fallbacks: imageModelFallbacks,
+          cfg,
+          agentId: sessionAgentId,
+          aliasIndex,
+          defaultProvider: modelRef.provider,
+          defaultModel: modelRef.model,
+          imageModelProvider,
+        });
+      }
+
+      const supportsImages =
+        modelOverride || imageModelFallbacks.length > 0
+          ? await resolveModelSupportsVision({
+              provider: parseProvider,
+              model: parseModel,
+              imageModelConfig,
+              defaultProvider: modelRef.provider,
+              cfg,
+              loadModelCatalog: context.loadGatewayModelCatalog,
+            })
+          : await resolveGatewayModelSupportsImages({
+              loadGatewayModelCatalog: context.loadGatewayModelCatalog,
+              provider: modelRef.provider,
+              model: modelRef.model,
+            });
 
       try {
         const parsed = await parseMessageWithAttachments(inboundMessage, normalizedAttachments, {
@@ -1573,6 +1627,10 @@ export const chatHandlers: GatewayRequestHandlers = {
         parsedImages = parsed.images;
         parsedImageOrder = parsed.imageOrder;
         parsedOffloadedRefs = parsed.offloadedRefs;
+        if (parsedImages.length === 0 && parsedOffloadedRefs.length === 0) {
+          modelOverride = undefined;
+          modelOverrideFallbacks = undefined;
+        }
       } catch (err) {
         // MediaOffloadError indicates a server-side storage fault (ENOSPC, EPERM,
         // etc.). All other errors are client-side input validation failures.
@@ -1744,53 +1802,6 @@ export const chatHandlers: GatewayRequestHandlers = {
           savedImages: await persistedImagesPromise,
         });
       };
-      // When message contains images, check if we need to switch to a vision-capable model.
-      // Check both inline images and offloaded attachments (large images >2MB are offloaded).
-      const hasAnyImages = parsedImages.length > 0 || parsedOffloadedRefs.length > 0;
-      let modelOverride: string | undefined;
-      let modelOverrideFallbacks: string[] | undefined;
-      if (hasAnyImages) {
-        const imageModelConfig = cfg.agents?.defaults?.imageModel;
-        const imageModelPrimary = resolveAgentModelPrimaryValue(imageModelConfig);
-        const imageModelFallbacks = resolveAgentModelFallbackValues(imageModelConfig);
-        if (imageModelPrimary || imageModelFallbacks.length > 0) {
-          const modelRef = resolveSessionModelRef(cfg, entry, agentId);
-          const aliasIndex = buildModelAliasIndex({ cfg, defaultProvider: modelRef.provider });
-          // Determine the primary model override
-          if (imageModelPrimary) {
-            modelOverride = imageModelPrimary;
-          } else if (imageModelFallbacks.length > 0) {
-            // Use first fallback as primary when no primary configured
-            modelOverride = imageModelFallbacks[0];
-          }
-          // Determine the provider context for fallback resolution.
-          // Providerless fallbacks should resolve against the image model's provider,
-          // not the agent's default provider.
-          let imageModelProvider: string | undefined;
-          if (modelOverride) {
-            const overrideRef = resolveModelRefFromString({
-              raw: modelOverride,
-              defaultProvider: modelRef.provider,
-              aliasIndex,
-            });
-            if (overrideRef) {
-              imageModelProvider = overrideRef.ref.provider;
-            }
-          }
-          // Prepare fallbacks with allowlist filtering
-          if (imageModelFallbacks.length > 0) {
-            modelOverrideFallbacks = prepareImageModelFallbacks({
-              fallbacks: imageModelFallbacks,
-              cfg,
-              agentId,
-              aliasIndex,
-              defaultProvider: modelRef.provider,
-              defaultModel: modelRef.model,
-              imageModelProvider,
-            });
-          }
-        }
-      }
       const dispatcher = createReplyDispatcher({
         ...replyPipeline,
         onError: (err) => {

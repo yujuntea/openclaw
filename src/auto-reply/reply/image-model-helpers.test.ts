@@ -5,10 +5,12 @@ import {
   isImageModel,
   prepareImageModelFallbacks,
   resolveChannelModelSupportsVision,
+  resolveModelSupportsVision,
 } from "./image-model-helpers.js";
 
 // Mock modules at the top level
 const mockBuildAllowedModelSet = vi.fn(() => ({ allowAny: true, allowedKeys: new Set() }));
+const emptyAliasIndex = () => ({ byAlias: new Map(), byKey: new Map() });
 
 vi.mock("../../agents/model-catalog.js", () => ({
   loadModelCatalog: vi.fn(async () => [
@@ -31,10 +33,10 @@ vi.mock("../../agents/model-catalog.js", () => ({
 }));
 
 vi.mock("../../agents/model-selection.js", () => ({
-  buildModelAliasIndex: vi.fn(() => new Map()),
+  buildModelAliasIndex: vi.fn(() => emptyAliasIndex()),
   buildAllowedModelSet: () => mockBuildAllowedModelSet(),
   modelKey: vi.fn((provider, model) => `${provider}/${model}`),
-  resolveModelRefFromString: vi.fn((params: { raw: string }) => {
+  resolveModelRefFromString: vi.fn((params: { raw: string; defaultProvider?: string }) => {
     const raw = params.raw.trim();
     if (raw.includes("/")) {
       const [provider, ...modelParts] = raw.split("/");
@@ -59,7 +61,7 @@ describe("collectImageModelKeys", () => {
   it("returns empty set when no config", () => {
     const result = collectImageModelKeys({
       imageModelConfig: undefined,
-      aliasIndex: new Map(),
+      aliasIndex: emptyAliasIndex(),
       defaultProvider: "anthropic",
     });
     expect(result.keys.size).toBe(0);
@@ -69,7 +71,7 @@ describe("collectImageModelKeys", () => {
   it("collects string config", () => {
     const result = collectImageModelKeys({
       imageModelConfig: "openai/gpt-4o",
-      aliasIndex: new Map(),
+      aliasIndex: emptyAliasIndex(),
       defaultProvider: "anthropic",
     });
     expect(result.keys.has("openai/gpt-4o")).toBe(true);
@@ -82,7 +84,7 @@ describe("collectImageModelKeys", () => {
         primary: "anthropic/claude-opus-4-6",
         fallbacks: ["openai/gpt-4o", "openai/gpt-4o-mini"],
       },
-      aliasIndex: new Map(),
+      aliasIndex: emptyAliasIndex(),
       defaultProvider: "anthropic",
     });
     expect(result.keys.has("anthropic/claude-opus-4-6")).toBe(true);
@@ -96,7 +98,7 @@ describe("collectImageModelKeys", () => {
       imageModelConfig: {
         fallbacks: ["openai/gpt-4o", "anthropic/claude-opus-4-6"],
       },
-      aliasIndex: new Map(),
+      aliasIndex: emptyAliasIndex(),
       defaultProvider: "anthropic",
     });
     expect(result.keys.has("openai/gpt-4o")).toBe(true);
@@ -110,7 +112,7 @@ describe("collectImageModelKeys", () => {
         primary: "gpt-4o", // providerless
         fallbacks: ["anthropic/claude-opus-4-6"],
       },
-      aliasIndex: new Map(),
+      aliasIndex: emptyAliasIndex(),
       defaultProvider: "openai",
     });
     expect(result.keys.has("gpt-4o")).toBe(true);
@@ -150,7 +152,7 @@ describe("prepareImageModelFallbacks", () => {
     const result = prepareImageModelFallbacks({
       fallbacks: [],
       cfg: {} as OpenClawConfig,
-      aliasIndex: new Map(),
+      aliasIndex: emptyAliasIndex(),
       defaultProvider: "anthropic",
     });
     expect(result).toEqual([]);
@@ -160,7 +162,7 @@ describe("prepareImageModelFallbacks", () => {
     const result = prepareImageModelFallbacks({
       fallbacks: ["openai/gpt-4o", "", "  ", "anthropic/claude-opus-4-6"],
       cfg: {} as OpenClawConfig,
-      aliasIndex: new Map(),
+      aliasIndex: emptyAliasIndex(),
       defaultProvider: "anthropic",
     });
     expect(result).toContain("openai/gpt-4o");
@@ -172,7 +174,7 @@ describe("prepareImageModelFallbacks", () => {
     const result = prepareImageModelFallbacks({
       fallbacks: ["openai/gpt-4o", "anthropic/claude-opus-4-6"],
       cfg: {} as OpenClawConfig,
-      aliasIndex: new Map(),
+      aliasIndex: emptyAliasIndex(),
       defaultProvider: "anthropic",
     });
     expect(result).toContain("openai/gpt-4o");
@@ -185,7 +187,7 @@ describe("prepareImageModelFallbacks", () => {
     const result = prepareImageModelFallbacks({
       fallbacks: ["gpt-4o"], // providerless
       cfg: {} as OpenClawConfig,
-      aliasIndex: new Map(),
+      aliasIndex: emptyAliasIndex(),
       defaultProvider: "anthropic",
       imageModelProvider: "openai",
     });
@@ -268,6 +270,32 @@ describe("resolveChannelModelSupportsVision", () => {
   });
 });
 
+describe("resolveModelSupportsVision", () => {
+  it("returns true when model matches configured image model", async () => {
+    await expect(
+      resolveModelSupportsVision({
+        provider: "openai",
+        model: "gpt-4o",
+        imageModelConfig: { primary: "openai/gpt-4o" },
+        defaultProvider: "anthropic",
+        cfg: {} as OpenClawConfig,
+      }),
+    ).resolves.toBe(true);
+  });
+
+  it("returns false for catalog text-only model", async () => {
+    await expect(
+      resolveModelSupportsVision({
+        provider: "anthropic",
+        model: "claude-3-haiku",
+        imageModelConfig: { primary: "openai/gpt-4o" },
+        defaultProvider: "anthropic",
+        cfg: {} as OpenClawConfig,
+      }),
+    ).resolves.toBe(false);
+  });
+});
+
 describe("image model auto-switch scenarios", () => {
   /**
    * Scenario 1: Dashboard sends image with allowlist configured
@@ -285,7 +313,7 @@ describe("image model auto-switch scenarios", () => {
       const result = prepareImageModelFallbacks({
         fallbacks: ["openai/gpt-4o", "openai/gpt-4o-mini", "anthropic/claude-3-haiku"],
         cfg: {} as OpenClawConfig,
-        aliasIndex: new Map(),
+        aliasIndex: emptyAliasIndex(),
         defaultProvider: "anthropic",
       });
 
@@ -308,7 +336,7 @@ describe("image model auto-switch scenarios", () => {
       const result = prepareImageModelFallbacks({
         fallbacks: ["gpt-4o-mini"], // providerless, should resolve as openai/gpt-4o-mini
         cfg: {} as OpenClawConfig,
-        aliasIndex: new Map(),
+        aliasIndex: emptyAliasIndex(),
         defaultProvider: "anthropic", // agent default is different from image model provider
         imageModelProvider: "openai",
       });
@@ -330,7 +358,7 @@ describe("image model auto-switch scenarios", () => {
         imageModelConfig: {
           fallbacks: ["openai/gpt-4o", "anthropic/claude-opus-4-6"],
         },
-        aliasIndex: new Map(),
+        aliasIndex: emptyAliasIndex(),
         defaultProvider: "anthropic",
       });
 
@@ -354,7 +382,7 @@ describe("image model auto-switch scenarios", () => {
       const result = prepareImageModelFallbacks({
         fallbacks: ["gpt-4o-mini", "gpt-4o"], // providerless
         cfg: {} as OpenClawConfig,
-        aliasIndex: new Map(),
+        aliasIndex: emptyAliasIndex(),
         defaultProvider: "anthropic", // agent default is different
         imageModelProvider: "openai", // derived from modelOverride
       });

@@ -532,6 +532,65 @@ describe("gateway server chat", () => {
     }
   });
 
+  test("chat.send preserves images and sets image model override for text-only session models", async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-gw-"));
+    const pngB64 =
+      "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/woAAn8B9FD5fHAAAAAASUVORK5CYII=";
+    try {
+      testState.sessionStorePath = path.join(dir, "sessions.json");
+      testState.agentConfig = {
+        model: { primary: "anthropic/claude-3-haiku" },
+        imageModel: { primary: "openai/gpt-4o" },
+      };
+      await writeSessionStore({
+        entries: {
+          main: {
+            sessionId: "sess-main",
+            updatedAt: Date.now(),
+          },
+        },
+      });
+
+      let captured:
+        | {
+            replyOptions?: {
+              modelOverride?: string;
+              images?: unknown[];
+            };
+          }
+        | undefined;
+      dispatchInboundMessageMock.mockImplementationOnce(async (...args: unknown[]) => {
+        [captured] = args as [typeof captured];
+        return undefined;
+      });
+
+      const res = await rpcReq(ws, "chat.send", {
+        sessionKey: "main",
+        message: "see image",
+        idempotencyKey: "idem-image-switch",
+        attachments: [
+          {
+            type: "image",
+            mimeType: "image/png",
+            fileName: "dot.png",
+            content: `data:image/png;base64,${pngB64}`,
+          },
+        ],
+      });
+
+      expect(res.ok).toBe(true);
+      await vi.waitFor(() => {
+        expect(dispatchInboundMessageMock).toHaveBeenCalledOnce();
+      });
+      expect(captured?.replyOptions?.modelOverride).toBe("openai/gpt-4o");
+      expect(captured?.replyOptions?.images).toHaveLength(1);
+    } finally {
+      testState.agentConfig = undefined;
+      testState.sessionStorePath = undefined;
+      await fs.rm(dir, { recursive: true, force: true });
+    }
+  });
+
   test("chat.history hides assistant NO_REPLY-only entries", async () => {
     const historyMessages = await loadChatHistoryWithMessages(buildNoReplyHistoryFixture());
     const textValues = collectHistoryTextValues(historyMessages);
