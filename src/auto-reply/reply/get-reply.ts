@@ -408,10 +408,6 @@ export async function getReplyFromConfig(
     defaultProvider,
     cfg,
     hasAppliedImageModelOverride,
-    loadModelCatalog: async () => {
-      const { loadModelCatalog: loadCatalog } = await import("../../agents/model-catalog.js");
-      return loadCatalog({ config: cfg });
-    },
   });
 
   // Skip channel model override when image model was already selected for attachments,

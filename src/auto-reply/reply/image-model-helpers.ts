@@ -6,10 +6,7 @@ import {
   type ModelAliasIndex,
 } from "../../agents/model-selection.js";
 import type { OpenClawConfig } from "../../config/config.js";
-import {
-  resolveAgentModelFallbackValues,
-  resolveAgentModelPrimaryValue,
-} from "../../config/model-input.js";
+import { resolveAgentModelPrimaryValue } from "../../config/model-input.js";
 import type { AgentModelConfig } from "../../config/types.agents-shared.js";
 
 /**
@@ -290,157 +287,6 @@ export function prepareImageModelFallbacks(params: PrepareImageModelFallbacksPar
 }
 
 /**
- * Extended parameters for collecting image model keys with fallback-derived provider.
- */
-export type CollectImageModelKeysWithFallbackProviderParams = {
-  imageModelConfig: AgentModelConfig | undefined;
-  aliasIndex: ModelAliasIndex;
-  defaultProvider: string;
-  /** When true, use fallback-derived provider for providerless primary */
-  useFallbackDerivedProvider?: boolean;
-  /** The fallback-derived provider to use */
-  imageModelProvider?: string;
-  /** Alias index for fallback resolution */
-  fallbackAliasIndex?: ModelAliasIndex;
-};
-
-/**
- * Collect image model keys with support for fallback-derived provider context.
- * This is a more flexible version for use in chat.ts where the provider context
- * depends on whether the primary was promoted from fallbacks.
- */
-export function collectImageModelKeysWithContext(
-  params: CollectImageModelKeysWithFallbackProviderParams,
-): ImageModelKeysResult {
-  const {
-    imageModelConfig,
-    aliasIndex,
-    defaultProvider,
-    useFallbackDerivedProvider = false,
-    imageModelProvider: providedImageModelProvider,
-    fallbackAliasIndex,
-  } = params;
-
-  const keys = new Set<string>();
-  const noProviderValue = defaultProvider ?? "";
-  if (!imageModelConfig) {
-    return { keys, imageModelDefaultProvider: noProviderValue };
-  }
-
-  const imageModelPrimary = resolveAgentModelPrimaryValue(imageModelConfig);
-  const fallbacks = resolveAgentModelFallbackValues(imageModelConfig);
-  let imageModelDefaultProvider = providedImageModelProvider ?? "";
-
-  // If no provider provided and we should use fallback-derived provider, scan fallbacks.
-  if (!imageModelDefaultProvider) {
-    const primaryTrimmed = imageModelPrimary?.trim() ?? "";
-    const primaryHasProvider = primaryTrimmed.includes("/");
-
-    // If primary has explicit provider, use it
-    if (primaryHasProvider) {
-      const resolved = resolveModelRefFromString({
-        raw: primaryTrimmed,
-        defaultProvider,
-        aliasIndex,
-      });
-      if (resolved) {
-        imageModelDefaultProvider = resolved.ref.provider;
-      }
-    } else if (!useFallbackDerivedProvider) {
-      // Try to resolve providerless primary as alias
-      const resolved = resolveModelRefFromString({
-        raw: primaryTrimmed,
-        defaultProvider,
-        aliasIndex,
-      });
-      if (resolved?.alias && resolved.ref.provider) {
-        imageModelDefaultProvider = resolved.ref.provider;
-      }
-    }
-
-    // Scan fallbacks for provider
-    if (!imageModelDefaultProvider) {
-      for (const fb of fallbacks) {
-        if (!fb?.trim()) {
-          continue;
-        }
-        const slash = fb.indexOf("/");
-        if (slash > 0) {
-          imageModelDefaultProvider = fb.slice(0, slash).trim();
-          break;
-        }
-      }
-    }
-
-    // Try alias resolution on fallbacks
-    if (!imageModelDefaultProvider) {
-      for (const fb of fallbacks) {
-        if (!fb?.trim()) {
-          continue;
-        }
-        const resolved = resolveModelRefFromString({
-          raw: fb.trim(),
-          defaultProvider,
-          aliasIndex,
-        });
-        if (resolved?.alias && resolved.ref.provider) {
-          imageModelDefaultProvider = resolved.ref.provider;
-          break;
-        }
-      }
-    }
-  }
-
-  const addModelKey = (rawModel: string, isPrimary: boolean) => {
-    const trimmed = rawModel.trim();
-    if (!trimmed) {
-      return;
-    }
-
-    const trimmedSlash = trimmed.indexOf("/");
-
-    if (trimmedSlash > 0) {
-      keys.add(trimmed);
-    }
-
-    if (trimmedSlash <= 0) {
-      keys.add(trimmed);
-    }
-
-    // Use fallback-derived provider context when appropriate
-    const useFallbackProvider = !isPrimary && useFallbackDerivedProvider && fallbackAliasIndex;
-    const providerContext = useFallbackProvider
-      ? imageModelDefaultProvider || defaultProvider
-      : isPrimary
-        ? defaultProvider
-        : imageModelDefaultProvider || defaultProvider;
-    const useAliasIndex = useFallbackProvider ? fallbackAliasIndex : aliasIndex;
-
-    if (providerContext) {
-      const resolved = resolveModelRefFromString({
-        raw: trimmed,
-        defaultProvider: providerContext,
-        aliasIndex: useAliasIndex,
-      });
-      if (resolved) {
-        keys.add(modelKey(resolved.ref.provider, resolved.ref.model));
-      }
-    }
-  };
-
-  if (imageModelPrimary) {
-    addModelKey(imageModelPrimary, true);
-  }
-  for (const fb of fallbacks) {
-    if (fb?.trim()) {
-      addModelKey(fb, false);
-    }
-  }
-
-  return { keys, imageModelDefaultProvider };
-}
-
-/**
  * Parameters for resolving channel model vision support.
  */
 export type ResolveChannelModelSupportsVisionParams = {
@@ -449,7 +295,6 @@ export type ResolveChannelModelSupportsVisionParams = {
   defaultProvider: string;
   cfg: OpenClawConfig;
   hasAppliedImageModelOverride: boolean;
-  loadModelCatalog: () => Promise<import("../../agents/model-catalog.js").ModelCatalogEntry[]>;
 };
 
 /**
@@ -481,9 +326,6 @@ export async function resolveChannelModelSupportsVision(
     defaultProvider,
     cfg,
     hasAppliedImageModelOverride,
-    // loadModelCatalog is part of the params interface but not used in this implementation.
-    // The catalog is loaded via loadCatalogFn below when needed.
-    loadModelCatalog: _loadModelCatalog,
   } = params;
 
   if (!channelModelOverride || !hasAppliedImageModelOverride) {
