@@ -1746,9 +1746,11 @@ export const chatHandlers: GatewayRequestHandlers = {
         });
       };
       // When message contains images, check if we need to switch to a vision-capable model.
+      // Check both inline images and offloaded attachments (large images >2MB are offloaded).
+      const hasAnyImages = parsedImages.length > 0 || parsedOffloadedRefs.length > 0;
       let modelOverride: string | undefined;
       let modelOverrideFallbacks: string[] | undefined;
-      if (parsedImages.length > 0) {
+      if (hasAnyImages) {
         const imageModelConfig = cfg.agents?.defaults?.imageModel;
         const imageModelPrimary = resolveAgentModelPrimaryValue(imageModelConfig);
         const imageModelFallbacks = resolveAgentModelFallbackValues(imageModelConfig);

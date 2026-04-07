@@ -5,7 +5,12 @@ import {
   resolveSessionAgentId,
   resolveAgentSkillsFilter,
 } from "../../agents/agent-scope.js";
-import { resolveModelRefFromString } from "../../agents/model-selection.js";
+import {
+  buildAllowedModelSet,
+  buildModelAliasIndex,
+  modelKey,
+  resolveModelRefFromString,
+} from "../../agents/model-selection.js";
 import { resolveAgentTimeoutMs } from "../../agents/timeout.js";
 import { DEFAULT_AGENT_WORKSPACE_DIR, ensureAgentWorkspace } from "../../agents/workspace.js";
 import { resolveChannelModelOverride } from "../../channels/model-overrides.js";
@@ -31,6 +36,7 @@ import {
 } from "./get-reply-fast-path.js";
 import { handleInlineActions } from "./get-reply-inline-actions.js";
 import { runPreparedReply } from "./get-reply-run.js";
+import { resolveChannelModelSupportsVision } from "./image-model-helpers.js";
 import { finalizeInboundContext } from "./inbound-context.js";
 import { emitPreAgentMessageHooks } from "./message-preprocess-hooks.js";
 import { createFastTestModelSelectionState } from "./model-selection.js";
@@ -184,7 +190,81 @@ export async function getReplyFromConfig(
   let provider = defaultProvider;
   let model = defaultModel;
   let hasResolvedHeartbeatModelOverride = false;
-  if (opts?.isHeartbeat) {
+  // Handle modelOverride from Gateway (e.g., image model when images detected)
+  let hasAppliedImageModelOverride = false;
+  // Track if a fallback was used when primary override was blocked by allowlist
+  let fallbackAppliedForImageModel = false;
+  if (opts?.modelOverride?.trim()) {
+    const modelRef = resolveModelRefFromString({
+      raw: opts.modelOverride.trim(),
+      defaultProvider,
+      aliasIndex,
+    });
+    if (modelRef) {
+      // Check if the model is allowed by the agent's allowlist
+      // Use buildAllowedModelSet to include models + fallbacks + default model
+      const { allowAny, allowedKeys } = buildAllowedModelSet({
+        cfg,
+        catalog: [], // Empty catalog; we only need allowedKeys
+        defaultProvider,
+        defaultModel,
+        agentId,
+      });
+      if (!allowAny) {
+        const modelKeyStr = modelKey(modelRef.ref.provider, modelRef.ref.model);
+        if (!allowedKeys.has(modelKeyStr)) {
+          // Model not in allowlist, try fallbacks before skipping
+          fallbackAppliedForImageModel = false;
+          if (opts?.modelOverrideFallbacks?.length) {
+            // Determine provider context for resolving providerless fallbacks.
+            // When modelOverride has explicit provider (e.g., "openai/gpt-4o"),
+            // providerless fallbacks should resolve against that provider, not defaultProvider.
+            // This matches the allowlist check logic in chat.ts.
+            const overrideProvider = modelRef.ref.provider;
+            const providerContext = overrideProvider ?? defaultProvider;
+            // Rebuild alias index with the correct provider context
+            const fallbackAliasIndex =
+              overrideProvider && overrideProvider !== defaultProvider
+                ? buildModelAliasIndex({ cfg, defaultProvider: providerContext })
+                : aliasIndex;
+            for (const fallbackRaw of opts.modelOverrideFallbacks) {
+              const fallbackRef = resolveModelRefFromString({
+                raw: fallbackRaw.trim(),
+                defaultProvider: providerContext,
+                aliasIndex: fallbackAliasIndex,
+              });
+              if (fallbackRef) {
+                const fallbackKeyStr = modelKey(fallbackRef.ref.provider, fallbackRef.ref.model);
+                if (allowedKeys.has(fallbackKeyStr)) {
+                  provider = fallbackRef.ref.provider;
+                  model = fallbackRef.ref.model;
+                  hasAppliedImageModelOverride = true;
+                  fallbackAppliedForImageModel = true;
+                  break;
+                }
+              }
+            }
+          }
+          if (!fallbackAppliedForImageModel) {
+            // No allowlisted fallback, skip the override and let default model be used
+            // This prevents Dashboard images from bypassing agent model restrictions
+            defaultRuntime.log?.(
+              `[image-model-switch] Model override ${opts.modelOverride} not in agent allowlist and no fallback available, using default model ${defaultProvider}/${defaultModel}`,
+            );
+          }
+        } else {
+          provider = modelRef.ref.provider;
+          model = modelRef.ref.model;
+          hasAppliedImageModelOverride = true;
+        }
+      } else {
+        // No allowlist, allow any model
+        provider = modelRef.ref.provider;
+        model = modelRef.ref.model;
+        hasAppliedImageModelOverride = true;
+      }
+    }
+  } else if (opts?.isHeartbeat) {
     // Prefer the resolved per-agent heartbeat model passed from the heartbeat runner,
     // fall back to the global defaults heartbeat model for backward compatibility.
     const heartbeatRaw =
@@ -320,7 +400,28 @@ export async function getReplyFromConfig(
     normalizeOptionalString(sessionEntry.modelOverride) ||
     normalizeOptionalString(sessionEntry.providerOverride),
   );
-  if (!hasResolvedHeartbeatModelOverride && !hasSessionModelOverride && channelModelOverride) {
+
+  // Check if channel model is already a vision model (skip image model switch if so).
+  const { channelModelIsVisionModel } = await resolveChannelModelSupportsVision({
+    channelModelOverride: channelModelOverride ?? undefined,
+    imageModelConfig: cfg.agents?.defaults?.imageModel,
+    defaultProvider,
+    cfg,
+    hasAppliedImageModelOverride,
+    loadModelCatalog: async () => {
+      const { loadModelCatalog: loadCatalog } = await import("../../agents/model-catalog.js");
+      return loadCatalog({ config: cfg });
+    },
+  });
+
+  // Skip channel model override when image model was already selected for attachments,
+  // UNLESS the channel model is already a vision model (no need to switch)
+  if (
+    !hasResolvedHeartbeatModelOverride &&
+    !hasSessionModelOverride &&
+    !(hasAppliedImageModelOverride && !channelModelIsVisionModel) &&
+    channelModelOverride
+  ) {
     const resolved = resolveModelRefFromString({
       raw: channelModelOverride.model,
       defaultProvider,
@@ -329,27 +430,6 @@ export async function getReplyFromConfig(
     if (resolved) {
       provider = resolved.ref.provider;
       model = resolved.ref.model;
-    }
-  }
-
-  // Apply model override for image-containing messages (e.g., Dashboard with images).
-  // This allows automatic switching to a vision-capable model when the message contains images.
-  let hasAppliedImageModelOverride = false;
-  if (opts?.modelOverride) {
-    const imageModelRef = resolveModelRefFromString({
-      raw: opts.modelOverride,
-      defaultProvider,
-      aliasIndex,
-    });
-    if (imageModelRef) {
-      const newProvider = imageModelRef.ref.provider;
-      const newModel = imageModelRef.ref.model;
-      // Only apply override if the model is different from the current selection
-      if (newProvider !== provider || newModel !== model) {
-        provider = newProvider;
-        model = newModel;
-        hasAppliedImageModelOverride = true;
-      }
     }
   }
 
