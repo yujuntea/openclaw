@@ -19,6 +19,7 @@ import {
 } from "openclaw/plugin-sdk/ssrf-runtime";
 import {
   isRecord,
+  normalizeOptionalLowercaseString,
   normalizeOptionalString,
   resolveUserPath,
 } from "openclaw/plugin-sdk/text-runtime";
@@ -89,10 +90,6 @@ let comfyFetchGuard = fetchWithSsrFGuard;
 
 export function _setComfyFetchGuardForTesting(impl: typeof fetchWithSsrFGuard | null): void {
   comfyFetchGuard = impl ?? fetchWithSsrFGuard;
-}
-
-function readConfigString(config: ComfyProviderConfig, key: string): string | undefined {
-  return normalizeOptionalString(config[key]);
 }
 
 function readConfigBoolean(config: ComfyProviderConfig, key: string): boolean | undefined {
@@ -267,7 +264,7 @@ async function readJsonResponse<T>(params: {
 }
 
 function inferFileExtension(params: { fileName?: string; mimeType?: string }): string {
-  const normalizedMime = params.mimeType?.toLowerCase().trim();
+  const normalizedMime = normalizeOptionalLowercaseString(params.mimeType);
   if (normalizedMime?.includes("jpeg")) {
     return "jpg";
   }
@@ -554,9 +551,9 @@ export function isComfyCapabilityConfigured(params: {
   const capabilityConfig = getComfyCapabilityConfig(config, params.capability);
   const hasWorkflow = Boolean(
     resolveComfyWorkflowSource(capabilityConfig).workflow ||
-    readConfigString(capabilityConfig, "workflowPath"),
+    normalizeOptionalString(capabilityConfig.workflowPath),
   );
-  const hasPromptNode = Boolean(readConfigString(capabilityConfig, "promptNodeId"));
+  const hasPromptNode = Boolean(normalizeOptionalString(capabilityConfig.promptNodeId));
   if (!hasWorkflow || !hasPromptNode) {
     return false;
   }
@@ -586,11 +583,11 @@ export async function runComfyWorkflow(params: {
   const workflow = await loadComfyWorkflow(capabilityConfig);
   const promptNodeId = getRequiredConfigString(capabilityConfig, "promptNodeId");
   const promptInputName =
-    readConfigString(capabilityConfig, "promptInputName") ?? DEFAULT_PROMPT_INPUT_NAME;
-  const inputImageNodeId = readConfigString(capabilityConfig, "inputImageNodeId");
+    normalizeOptionalString(capabilityConfig.promptInputName) ?? DEFAULT_PROMPT_INPUT_NAME;
+  const inputImageNodeId = normalizeOptionalString(capabilityConfig.inputImageNodeId);
   const inputImageInputName =
-    readConfigString(capabilityConfig, "inputImageInputName") ?? DEFAULT_INPUT_IMAGE_INPUT_NAME;
-  const outputNodeId = readConfigString(capabilityConfig, "outputNodeId");
+    normalizeOptionalString(capabilityConfig.inputImageInputName) ?? DEFAULT_INPUT_IMAGE_INPUT_NAME;
+  const outputNodeId = normalizeOptionalString(capabilityConfig.outputNodeId);
   const pollIntervalMs =
     readConfigInteger(capabilityConfig, "pollIntervalMs") ?? DEFAULT_POLL_INTERVAL_MS;
   const timeoutMs =
@@ -619,7 +616,7 @@ export async function runComfyWorkflow(params: {
 
   const { baseUrl, allowPrivateNetwork, headers, dispatcherPolicy } =
     resolveProviderHttpRequestConfig({
-      baseUrl: readConfigString(capabilityConfig, "baseUrl"),
+      baseUrl: normalizeOptionalString(capabilityConfig.baseUrl),
       defaultBaseUrl:
         mode === "cloud" ? DEFAULT_COMFY_CLOUD_BASE_URL : DEFAULT_COMFY_LOCAL_BASE_URL,
       allowPrivateNetwork:
