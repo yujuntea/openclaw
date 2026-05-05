@@ -1586,6 +1586,10 @@ export const chatHandlers: GatewayRequestHandlers = {
           parseProvider = overrideRef.ref.provider;
           parseModel = overrideRef.ref.model;
           imageModelProvider = overrideRef.ref.provider;
+        } else {
+          // Alias resolution failed; use the raw modelOverride string as parseModel
+          // so that resolveModelSupportsVision can still match it against imageModelConfig.
+          parseModel = modelOverride;
         }
       }
 
