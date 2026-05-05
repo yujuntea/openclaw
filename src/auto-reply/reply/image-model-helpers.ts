@@ -342,7 +342,6 @@ export async function resolveChannelModelSupportsVision(
     return { channelModelIsVisionModel: false };
   }
 
-  const { buildModelAliasIndex } = await import("../../agents/model-selection.js");
   const {
     findModelInCatalog,
     modelSupportsVision,
@@ -356,7 +355,6 @@ export async function resolveChannelModelSupportsVision(
   const channelAliasIndex = buildModelAliasIndex({ cfg, defaultProvider });
 
   // Resolve the channel model to get provider/model
-  const { resolveModelRefFromString, modelKey } = await import("../../agents/model-selection.js");
   const channelResolved = resolveModelRefFromString({
     raw: channelModelOverride.model,
     defaultProvider,
@@ -381,20 +379,7 @@ export async function resolveChannelModelSupportsVision(
 
     const channelKey = modelKey(channelResolved.ref.provider, channelResolved.ref.model);
 
-    // Resolve channel override using the same provider context as channelResolved.
-    const channelOverrideResolved = resolveModelRefFromString({
-      raw: channelModelOverride.model,
-      defaultProvider,
-      aliasIndex: channelAliasIndex,
-    });
-
-    // When channel override can't be resolved (no alias match), use the channel's
-    // provider to construct the key.
-    const channelOverrideKey = channelOverrideResolved
-      ? modelKey(channelOverrideResolved.ref.provider, channelOverrideResolved.ref.model)
-      : modelKey(channelResolved.ref.provider, channelModelOverride.model);
-
-    if (imageModelKeys.has(channelKey) || imageModelKeys.has(channelOverrideKey)) {
+    if (imageModelKeys.has(channelKey)) {
       return { channelModelIsVisionModel: true, channelResolved: channelResolved.ref };
     }
   }

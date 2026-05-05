@@ -214,7 +214,6 @@ export async function getReplyFromConfig(
         const modelKeyStr = modelKey(modelRef.ref.provider, modelRef.ref.model);
         if (!allowedKeys.has(modelKeyStr)) {
           // Model not in allowlist, try fallbacks before skipping
-          fallbackAppliedForImageModel = false;
           if (opts?.modelOverrideFallbacks?.length) {
             // Determine provider context for resolving providerless fallbacks.
             // When modelOverride has explicit provider (e.g., "openai/gpt-4o"),
@@ -258,6 +257,11 @@ export async function getReplyFromConfig(
             defaultRuntime.log?.(
               `[image-model-switch] Model override ${opts.modelOverride} not in agent allowlist and no fallback available, using default model ${defaultProvider}/${defaultModel}`,
             );
+            if (opts?.images?.length) {
+              defaultRuntime.log?.(
+                `[image-model-switch] WARNING: Images are present but the default model ${defaultProvider}/${defaultModel} may not support vision; images will still be passed to the agent`,
+              );
+            }
           }
         } else {
           provider = modelRef.ref.provider;
@@ -276,6 +280,11 @@ export async function getReplyFromConfig(
       defaultRuntime.log?.(
         `[image-model-switch] Failed to resolve modelOverride "${opts.modelOverride}" against alias index, using default model ${defaultProvider}/${defaultModel}`,
       );
+      if (opts?.images?.length) {
+        defaultRuntime.log?.(
+          `[image-model-switch] WARNING: Images are present but modelOverride could not be resolved; the default model ${defaultProvider}/${defaultModel} may not support vision`,
+        );
+      }
     }
   } else if (opts?.isHeartbeat) {
     // Prefer the resolved per-agent heartbeat model passed from the heartbeat runner,
