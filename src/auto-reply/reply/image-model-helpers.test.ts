@@ -391,5 +391,85 @@ describe("image model auto-switch scenarios", () => {
       expect(result).toContain("openai/gpt-4o-mini");
       expect(result).toContain("openai/gpt-4o");
     });
+
+    it("falls back to defaultProvider when imageModelProvider not set", () => {
+      const result = prepareImageModelFallbacks({
+        fallbacks: ["gpt-4o-mini"], // providerless
+        cfg: {} as OpenClawConfig,
+        aliasIndex: emptyAliasIndex(),
+        defaultProvider: "anthropic",
+      });
+
+      // Without imageModelProvider, should use defaultProvider
+      expect(result).toContain("anthropic/gpt-4o-mini");
+    });
+  });
+
+  /**
+   * Scenario 5: Empty and whitespace-only fallbacks
+   */
+  describe("empty and whitespace fallback handling", () => {
+    it("filters out empty strings and whitespace", () => {
+      const result = prepareImageModelFallbacks({
+        fallbacks: ["", "  ", "\t", "openai/gpt-4o"],
+        cfg: {} as OpenClawConfig,
+        aliasIndex: emptyAliasIndex(),
+        defaultProvider: "anthropic",
+      });
+
+      expect(result).toEqual(["openai/gpt-4o"]);
+    });
+
+    it("handles all-empty fallbacks gracefully", () => {
+      const result = prepareImageModelFallbacks({
+        fallbacks: ["", "  ", "\t"],
+        cfg: {} as OpenClawConfig,
+        aliasIndex: emptyAliasIndex(),
+        defaultProvider: "anthropic",
+      });
+
+      expect(result).toEqual([]);
+    });
+  });
+
+  /**
+   * Scenario 6: collectImageModelKeys with edge cases
+   */
+  describe("collectImageModelKeys edge cases", () => {
+    it("handles empty fallbacks array", () => {
+      const result = collectImageModelKeys({
+        imageModelConfig: {
+          primary: "openai/gpt-4o",
+          fallbacks: [],
+        },
+        aliasIndex: emptyAliasIndex(),
+        defaultProvider: "anthropic",
+      });
+
+      expect(result.keys.has("openai/gpt-4o")).toBe(true);
+      expect(result.keys.size).toBe(1);
+    });
+
+    it("handles primary-only config", () => {
+      const result = collectImageModelKeys({
+        imageModelConfig: { primary: "anthropic/claude-opus-4-6" },
+        aliasIndex: emptyAliasIndex(),
+        defaultProvider: "anthropic",
+      });
+
+      expect(result.keys.has("anthropic/claude-opus-4-6")).toBe(true);
+      expect(result.imageModelDefaultProvider).toBe("anthropic");
+    });
+
+    it("handles empty primary string", () => {
+      const result = collectImageModelKeys({
+        imageModelConfig: { primary: "", fallbacks: ["openai/gpt-4o"] },
+        aliasIndex: emptyAliasIndex(),
+        defaultProvider: "anthropic",
+      });
+
+      expect(result.keys.has("openai/gpt-4o")).toBe(true);
+      expect(result.imageModelDefaultProvider).toBe("openai");
+    });
   });
 });

@@ -228,8 +228,15 @@ export async function getReplyFromConfig(
                 ? buildModelAliasIndex({ cfg, defaultProvider: providerContext })
                 : aliasIndex;
             for (const fallbackRaw of opts.modelOverrideFallbacks) {
+              if (typeof fallbackRaw !== "string") {
+                continue;
+              }
+              const trimmed = fallbackRaw.trim();
+              if (!trimmed) {
+                continue;
+              }
               const fallbackRef = resolveModelRefFromString({
-                raw: fallbackRaw.trim(),
+                raw: trimmed,
                 defaultProvider: providerContext,
                 aliasIndex: fallbackAliasIndex,
               });
@@ -263,6 +270,12 @@ export async function getReplyFromConfig(
         model = modelRef.ref.model;
         hasAppliedImageModelOverride = true;
       }
+    } else {
+      // modelOverride was configured but alias resolution failed;
+      // log a warning and fall through to default model.
+      defaultRuntime.log?.(
+        `[image-model-switch] Failed to resolve modelOverride "${opts.modelOverride}" against alias index, using default model ${defaultProvider}/${defaultModel}`,
+      );
     }
   } else if (opts?.isHeartbeat) {
     // Prefer the resolved per-agent heartbeat model passed from the heartbeat runner,
